@@ -168,7 +168,7 @@ curl -X POST 'http://0.0.0.0:4000/chat/completions' \
 
 ## Daily Rate Limits (RPD/TPD)
 
-LiteLLM now supports daily rate limits (`rpd` - requests per day, `tpd` - tokens per day) in addition to per-minute limits. This is particularly useful for providers like Google Gemini that have brutal daily rate limits.
+LiteLLM now supports daily rate limits (`rpd` - requests per day, `tpd` - tokens per day) in addition to per-minute limits. This is particularly useful for providers like Google Gemini that have strict daily rate limits.
 
 ### Example: Google Gemini with Daily Limits
 
