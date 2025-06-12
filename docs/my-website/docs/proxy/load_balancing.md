@@ -4,7 +4,7 @@ import TabItem from '@theme/TabItem';
 # Proxy - Load Balancing
 Load balance multiple instances of the same model
 
-The proxy will handle routing requests (using LiteLLM's Router). **Set `rpm` in the config if you want maximize throughput**
+The proxy will handle routing requests (using LiteLLM's Router). **Set `rpm`, `tpm`, `rpd`, `tpd` in the config if you want maximize throughput and respect provider limits**
 
 
 :::info
@@ -37,6 +37,7 @@ model_list:
       api_base: https://openai-france-1234.openai.azure.com/
       api_key: <your-azure-api-key>
       rpm: 1440
+      rpd: 50000  # 50k requests per day limit
 
 router_settings:
   routing_strategy: simple-shuffle # Literal["simple-shuffle", "least-busy", "usage-based-routing","latency-based-routing"], default="simple-shuffle"
@@ -165,10 +166,65 @@ curl -X POST 'http://0.0.0.0:4000/chat/completions' \
 
 [**See Code**](https://github.com/BerriAI/litellm/blob/6b8806b45f970cb2446654d2c379f8dcaa93ce3c/litellm/router.py#L2535)
 
+## Daily Rate Limits (RPD/TPD)
+
+LiteLLM now supports daily rate limits (`rpd` - requests per day, `tpd` - tokens per day) in addition to per-minute limits. This is particularly useful for providers like Google Gemini that have brutal daily rate limits.
+
+### Example: Google Gemini with Daily Limits
+
+```yaml
+model_list:
+  - model_name: gemini/mytest
+    litellm_params:
+      model: gemini/gemini-2.5-pro-preview-03-25
+      api_key: os.environ/GEMINI_API_KEY
+      rpm: 150        # requests per minute
+      tpm: 2000000    # tokens per minute  
+      rpd: 1000       # requests per day (NEW)
+      tpd: 5000000    # tokens per day (NEW)
+    model_info:
+      mode: completion
+```
+
+### Rate Limit Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `rpm` | Requests per minute | `rpm: 60` |
+| `tpm` | Tokens per minute | `tpm: 100000` |
+| `rpd` | Requests per day | `rpd: 1000` |
+| `tpd` | Tokens per day | `tpd: 5000000` |
+
+### How Daily Limits Work
+
+- Daily limits are tracked using a 24-hour rolling window
+- Cache keys use `YYYY-MM-DD` format for daily tracking
+- When a deployment hits its daily limit, it's automatically excluded from routing
+- Daily usage resets at midnight UTC
+- Works with Redis for multi-instance deployments
+
+### Combining Multiple Rate Limits
+
+You can use all rate limit types together:
+
+```yaml
+model_list:
+  - model_name: my-model
+    litellm_params:
+      model: gpt-4
+      api_key: sk-...
+      rpm: 100        # 100 requests per minute
+      tpm: 150000     # 150k tokens per minute
+      rpd: 10000      # 10k requests per day
+      tpd: 20000000   # 20M tokens per day
+```
+
+The proxy will enforce whichever limit is reached first.
+
 
 ## Load Balancing using multiple litellm instances (Kubernetes, Auto Scaling)
 
-LiteLLM Proxy supports sharing rpm/tpm shared across multiple litellm instances, pass `redis_host`, `redis_password` and `redis_port` to enable this. (LiteLLM will use Redis to track rpm/tpm usage )
+LiteLLM Proxy supports sharing rpm/tpm/rpd/tpd across multiple litellm instances, pass `redis_host`, `redis_password` and `redis_port` to enable this. (LiteLLM will use Redis to track rate limit usage )
 
 Example config
 
