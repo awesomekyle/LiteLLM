@@ -254,8 +254,11 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             current_minute = dt.strftime(
                 "%H-%M"
             )  # use the same timezone regardless of system clock
+            current_day = dt.strftime("%Y-%m-%d")
 
             tpm_key = f"{id}:{model}:tpm:{current_minute}"
+            tpd_key = f"{id}:{model}:tpd:{current_day}"
+            rpd_key = f"{id}:{model}:rpd:{current_day}"
             # ------------
             # Update usage
             # ------------
@@ -264,6 +267,14 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             ## TPM
             self.router_cache.increment_cache(
                 key=tpm_key, value=total_tokens, ttl=self.routing_args.ttl
+            )
+            ## TPD (daily tokens) - 24 hour TTL
+            self.router_cache.increment_cache(
+                key=tpd_key, value=total_tokens, ttl=24 * 60 * 60  # 24 hours
+            )
+            ## RPD (daily requests) - 24 hour TTL
+            self.router_cache.increment_cache(
+                key=rpd_key, value=1, ttl=24 * 60 * 60  # 24 hours
             )
             ### TESTING ###
             if self.test_flag:
@@ -301,8 +312,11 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             current_minute = dt.strftime(
                 "%H-%M"
             )  # use the same timezone regardless of system clock
+            current_day = dt.strftime("%Y-%m-%d")
 
             tpm_key = f"{id}:{model}:tpm:{current_minute}"
+            tpd_key = f"{id}:{model}:tpd:{current_day}"
+            rpd_key = f"{id}:{model}:rpd:{current_day}"
             # ------------
             # Update usage
             # ------------
@@ -313,6 +327,20 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 key=tpm_key,
                 value=total_tokens,
                 ttl=self.routing_args.ttl,
+                parent_otel_span=parent_otel_span,
+            )
+            ## TPD (daily tokens) - 24 hour TTL
+            await self.router_cache.async_increment_cache(
+                key=tpd_key,
+                value=total_tokens,
+                ttl=24 * 60 * 60,  # 24 hours
+                parent_otel_span=parent_otel_span,
+            )
+            ## RPD (daily requests) - 24 hour TTL  
+            await self.router_cache.async_increment_cache(
+                key=rpd_key,
+                value=1,
+                ttl=24 * 60 * 60,  # 24 hours
                 parent_otel_span=parent_otel_span,
             )
 
@@ -333,6 +361,8 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         all_deployments: Dict,
         input_tokens: int,
         rpm_dict: Dict,
+        tpd_dict: Optional[Dict] = None,
+        rpd_dict: Optional[Dict] = None,
     ):
         lowest_tpm = float("inf")
         potential_deployments = []  # if multiple deployments have the same low value
@@ -367,12 +397,47 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 _deployment_rpm = _deployment.get("model_info", {}).get("rpm")
             if _deployment_rpm is None:
                 _deployment_rpm = float("inf")
+
+            # Get daily limits
+            _deployment_tpd = None
+            if _deployment_tpd is None:
+                _deployment_tpd = _deployment.get("tpd")
+            if _deployment_tpd is None:
+                _deployment_tpd = _deployment.get("litellm_params", {}).get("tpd")
+            if _deployment_tpd is None:
+                _deployment_tpd = _deployment.get("model_info", {}).get("tpd")
+            if _deployment_tpd is None:
+                _deployment_tpd = float("inf")
+
+            _deployment_rpd = None
+            if _deployment_rpd is None:
+                _deployment_rpd = _deployment.get("rpd")
+            if _deployment_rpd is None:
+                _deployment_rpd = _deployment.get("litellm_params", {}).get("rpd")
+            if _deployment_rpd is None:
+                _deployment_rpd = _deployment.get("model_info", {}).get("rpd")
+            if _deployment_rpd is None:
+                _deployment_rpd = float("inf")
             if item_tpm + input_tokens > _deployment_tpm:
                 continue
             elif (
                 (rpm_dict is not None and item in rpm_dict)
                 and rpm_dict[item] is not None
                 and (rpm_dict[item] + 1 >= _deployment_rpm)
+            ):
+                continue
+            # Check daily token limit
+            elif (
+                (tpd_dict is not None and item in tpd_dict)
+                and tpd_dict[item] is not None
+                and (tpd_dict[item] + input_tokens >= _deployment_tpd)
+            ):
+                continue
+            # Check daily request limit
+            elif (
+                (rpd_dict is not None and item in rpd_dict)
+                and rpd_dict[item] is not None
+                and (rpd_dict[item] + 1 >= _deployment_rpd)
             ):
                 continue
             elif item_tpm == lowest_tpm:
@@ -390,6 +455,10 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         tpm_values: Optional[list],
         rpm_keys: list,
         rpm_values: Optional[list],
+        tpd_keys: Optional[list] = None,
+        tpd_values: Optional[list] = None,
+        rpd_keys: Optional[list] = None,
+        rpd_values: Optional[list] = None,
         messages: Optional[List[Dict[str, str]]] = None,
         input: Optional[Union[str, List]] = None,
     ) -> Optional[dict]:
@@ -407,6 +476,17 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         rpm_dict = {}  # {model_id: 1, ..}
         for idx, key in enumerate(rpm_keys):
             rpm_dict[rpm_keys[idx].split(":")[0]] = rpm_values[idx]
+
+        # Build daily tracking dictionaries
+        tpd_dict = {}  # {model_id: 1, ..}
+        if tpd_keys is not None and tpd_values is not None:
+            for idx, key in enumerate(tpd_keys):
+                tpd_dict[tpd_keys[idx].split(":")[0]] = tpd_values[idx]
+
+        rpd_dict = {}  # {model_id: 1, ..}
+        if rpd_keys is not None and rpd_values is not None:
+            for idx, key in enumerate(rpd_keys):
+                rpd_dict[rpd_keys[idx].split(":")[0]] = rpd_values[idx]
 
         try:
             input_tokens = token_counter(messages=messages, text=input)
@@ -429,12 +509,35 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 if tpm_key not in tpm_dict or tpm_dict[tpm_key] is None:
                     tpm_dict[tpm_key] = 0
 
+        # Initialize daily dictionaries for unused deployments
+        if tpd_dict is None:
+            tpd_dict = {}
+            for deployment in healthy_deployments:
+                tpd_dict[deployment["model_info"]["id"]] = 0
+        else:
+            for d in healthy_deployments:
+                tpd_key = d["model_info"]["id"]
+                if tpd_key not in tpd_dict or tpd_dict[tpd_key] is None:
+                    tpd_dict[tpd_key] = 0
+
+        if rpd_dict is None:
+            rpd_dict = {}
+            for deployment in healthy_deployments:
+                rpd_dict[deployment["model_info"]["id"]] = 0
+        else:
+            for d in healthy_deployments:
+                rpd_key = d["model_info"]["id"]
+                if rpd_key not in rpd_dict or rpd_dict[rpd_key] is None:
+                    rpd_dict[rpd_key] = 0
+
         all_deployments = tpm_dict
         potential_deployments = self._return_potential_deployments(
             healthy_deployments=healthy_deployments,
             all_deployments=all_deployments,
             input_tokens=input_tokens,
             rpm_dict=rpm_dict,
+            tpd_dict=tpd_dict,
+            rpd_dict=rpd_dict,
         )
         print_verbose("returning picked lowest tpm/rpm deployment.")
 
@@ -462,9 +565,12 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
 
         dt = get_utc_datetime()
         current_minute = dt.strftime("%H-%M")
+        current_day = dt.strftime("%Y-%m-%d")
 
         tpm_keys = []
         rpm_keys = []
+        tpd_keys = []
+        rpd_keys = []
         for m in healthy_deployments:
             if isinstance(m, dict):
                 id = m.get("model_info", {}).get(
@@ -473,11 +579,15 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 deployment_name = m.get("litellm_params", {}).get("model")
                 tpm_key = "{}:{}:tpm:{}".format(id, deployment_name, current_minute)
                 rpm_key = "{}:{}:rpm:{}".format(id, deployment_name, current_minute)
+                tpd_key = "{}:{}:tpd:{}".format(id, deployment_name, current_day)
+                rpd_key = "{}:{}:rpd:{}".format(id, deployment_name, current_day)
 
                 tpm_keys.append(tpm_key)
                 rpm_keys.append(rpm_key)
+                tpd_keys.append(tpd_key)
+                rpd_keys.append(rpd_key)
 
-        combined_tpm_rpm_keys = tpm_keys + rpm_keys
+        combined_tpm_rpm_keys = tpm_keys + rpm_keys + tpd_keys + rpd_keys
 
         combined_tpm_rpm_values = await self.router_cache.async_batch_get_cache(
             keys=combined_tpm_rpm_keys
@@ -485,10 +595,14 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
 
         if combined_tpm_rpm_values is not None:
             tpm_values = combined_tpm_rpm_values[: len(tpm_keys)]
-            rpm_values = combined_tpm_rpm_values[len(tpm_keys) :]
+            rpm_values = combined_tpm_rpm_values[len(tpm_keys) : len(tpm_keys) + len(rpm_keys)]
+            tpd_values = combined_tpm_rpm_values[len(tpm_keys) + len(rpm_keys) : len(tpm_keys) + len(rpm_keys) + len(tpd_keys)]
+            rpd_values = combined_tpm_rpm_values[len(tpm_keys) + len(rpm_keys) + len(tpd_keys) :]
         else:
             tpm_values = None
             rpm_values = None
+            tpd_values = None
+            rpd_values = None
 
         deployment = self._common_checks_available_deployment(
             model_group=model_group,
@@ -497,6 +611,10 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             tpm_values=tpm_values,
             rpm_keys=rpm_keys,
             rpm_values=rpm_values,
+            tpd_keys=tpd_keys,
+            tpd_values=tpd_values,
+            rpd_keys=rpd_keys,
+            rpd_values=rpd_values,
             messages=messages,
             input=input,
         )
@@ -582,8 +700,11 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
 
         dt = get_utc_datetime()
         current_minute = dt.strftime("%H-%M")
+        current_day = dt.strftime("%Y-%m-%d")
         tpm_keys = []
         rpm_keys = []
+        tpd_keys = []
+        rpd_keys = []
         for m in healthy_deployments:
             if isinstance(m, dict):
                 id = m.get("model_info", {}).get(
@@ -592,15 +713,25 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 deployment_name = m.get("litellm_params", {}).get("model")
                 tpm_key = "{}:{}:tpm:{}".format(id, deployment_name, current_minute)
                 rpm_key = "{}:{}:rpm:{}".format(id, deployment_name, current_minute)
+                tpd_key = "{}:{}:tpd:{}".format(id, deployment_name, current_day)
+                rpd_key = "{}:{}:rpd:{}".format(id, deployment_name, current_day)
 
                 tpm_keys.append(tpm_key)
                 rpm_keys.append(rpm_key)
+                tpd_keys.append(tpd_key)
+                rpd_keys.append(rpd_key)
 
         tpm_values = self.router_cache.batch_get_cache(
             keys=tpm_keys, parent_otel_span=parent_otel_span
         )  # [1, 2, None, ..]
         rpm_values = self.router_cache.batch_get_cache(
             keys=rpm_keys, parent_otel_span=parent_otel_span
+        )  # [1, 2, None, ..]
+        tpd_values = self.router_cache.batch_get_cache(
+            keys=tpd_keys, parent_otel_span=parent_otel_span
+        )  # [1, 2, None, ..]
+        rpd_values = self.router_cache.batch_get_cache(
+            keys=rpd_keys, parent_otel_span=parent_otel_span
         )  # [1, 2, None, ..]
 
         deployment = self._common_checks_available_deployment(
@@ -610,6 +741,10 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             tpm_values=tpm_values,
             rpm_keys=rpm_keys,
             rpm_values=rpm_values,
+            tpd_keys=tpd_keys,
+            tpd_values=tpd_values,
+            rpd_keys=rpd_keys,
+            rpd_values=rpd_values,
             messages=messages,
             input=input,
         )

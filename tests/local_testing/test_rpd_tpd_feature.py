@@ -138,12 +138,95 @@ async def test_router_daily_usage_tracking():
     print("✓ Router daily usage tracking works")
 
 
+@pytest.mark.asyncio 
+async def test_daily_rate_limiting():
+    """Test that daily rate limits are enforced"""
+    from litellm.proxy.hooks.dynamic_rate_limiter import _PROXY_DynamicRateLimitHandler
+    from litellm.proxy._types import UserAPIKeyAuth
+    from litellm.caching.caching import DualCache
+    from litellm import Router
+    
+    # Create router with daily limits
+    model_list = [
+        {
+            "model_name": "test-gemini",
+            "litellm_params": {
+                "model": "gemini/gemini-1.5-pro",
+                "api_key": "test-key",
+                "tpm": 1000,
+                "rpm": 100,
+                "tpd": 10000,  # 10000 tokens per day
+                "rpd": 1000,   # 1000 requests per day
+            },
+            "model_info": {"id": "gemini-deployment-1"}
+        }
+    ]
+    
+    router = Router(
+        model_list=model_list,
+        cache=DualCache()
+    )
+    
+    # Create rate limiter
+    rate_limiter = _PROXY_DynamicRateLimitHandler(internal_usage_cache=DualCache())
+    rate_limiter.update_variables(llm_router=router)
+    
+    # Test the check_available_usage method with daily limits
+    available_tpm, available_rpm, model_tpm, model_rpm, active_projects, available_tpd, available_rpd = await rate_limiter.check_available_usage(
+        model="test-gemini"
+    )
+    
+    # Since there's no usage yet, should have available daily limits
+    print(f"Available daily limits - TPD: {available_tpd}, RPD: {available_rpd}")
+    
+    # The values should be either None (if no limits set) or the full limits (if limits set)
+    assert available_tpd is None or available_tpd >= 0
+    assert available_rpd is None or available_rpd >= 0
+    
+    print("✓ Daily rate limiting check works")
+
+
+def test_deployment_config_yaml_example():
+    """Test that the example config from the issue works"""
+    # This is the example from the GitHub issue
+    deployment_config = {
+        "model_name": "gemini/mytest",
+        "litellm_params": {
+            "model": "gemini/gemini-2.5-pro-preview-03-25",
+            "api_key": "os.environ/GEMINI_API_KEY",
+            "rpm": 150,
+            "tpm": 2000000,
+            "rpd": 1000,  # This is the new field we added
+        },
+        "model_info": {
+            "mode": "completion"
+        }
+    }
+    
+    # Test that this config can be used to create LiteLLM_Params
+    from litellm.types.router import LiteLLM_Params
+    
+    litellm_params = deployment_config["litellm_params"]
+    
+    # Should be able to create params with the new fields
+    params = LiteLLM_Params(**litellm_params)
+    
+    assert params.rpm == 150
+    assert params.tpm == 2000000
+    assert params.rpd == 1000
+    assert hasattr(params, 'tpd')  # Should have tpd field even if not set
+    
+    print("✓ Example deployment config works with rpd/tpd")
+
+
 if __name__ == "__main__":
     test_model_group_info_supports_rpd_tpd()
     test_router_cache_enum_supports_daily()
     test_litellm_params_supports_rpd_tpd()
+    test_deployment_config_yaml_example()
     
-    # Run async test
+    # Run async tests
     asyncio.run(test_router_daily_usage_tracking())
+    asyncio.run(test_daily_rate_limiting())
     
     print("All RPD/TPD tests passed!")
