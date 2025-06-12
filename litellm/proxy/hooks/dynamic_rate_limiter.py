@@ -81,7 +81,13 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
     async def check_available_usage(
         self, model: str, priority: Optional[str] = None
     ) -> Tuple[
-        Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]
+        Optional[int],
+        Optional[int],
+        Optional[int],
+        Optional[int],
+        Optional[int],
+        Optional[int],
+        Optional[int],
     ]:
         """
         For a given model, get its available tpm/rpm/tpd/rpd
@@ -170,7 +176,7 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
 
             if available_rpm is not None and available_rpm < 0:
                 available_rpm = 0
-            
+
             # Add daily tracking logic
             total_model_tpd: Optional[int] = None
             total_model_rpd: Optional[int] = None
@@ -323,7 +329,12 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                         )
                     },
                 )
-            elif available_rpm is not None or available_tpm is not None or available_rpd is not None or available_tpd is not None:
+            elif (
+                available_rpm is not None
+                or available_tpm is not None
+                or available_rpd is not None
+                or available_tpd is not None
+            ):
                 ## UPDATE CACHE WITH ACTIVE PROJECT
                 asyncio.create_task(
                     self.internal_usage_cache.async_set_cache_sadd(  # this is a set

@@ -182,12 +182,12 @@ class GenericLiteLLMParams(CredentialLiteLLMParams, CustomPricingLiteLLMParams):
     rpm: Optional[int] = None
     tpd: Optional[int] = None
     rpd: Optional[int] = None
-    timeout: Optional[Union[float, str, httpx.Timeout]] = (
-        None  # if str, pass in as os.environ/
-    )
-    stream_timeout: Optional[Union[float, str]] = (
-        None  # timeout when making stream=True calls, if str, pass in as os.environ/
-    )
+    timeout: Optional[
+        Union[float, str, httpx.Timeout]
+    ] = None  # if str, pass in as os.environ/
+    stream_timeout: Optional[
+        Union[float, str]
+    ] = None  # timeout when making stream=True calls, if str, pass in as os.environ/
     max_retries: Optional[int] = None
     organization: Optional[str] = None  # for openai orgs
     configurable_clientside_auth_params: CONFIGURABLE_CLIENTSIDE_AUTH_PARAMS = None

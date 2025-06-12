@@ -336,7 +336,7 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 ttl=24 * 60 * 60,  # 24 hours
                 parent_otel_span=parent_otel_span,
             )
-            ## RPD (daily requests) - 24 hour TTL  
+            ## RPD (daily requests) - 24 hour TTL
             await self.router_cache.async_increment_cache(
                 key=rpd_key,
                 value=1,
@@ -595,9 +595,18 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
 
         if combined_tpm_rpm_values is not None:
             tpm_values = combined_tpm_rpm_values[: len(tpm_keys)]
-            rpm_values = combined_tpm_rpm_values[len(tpm_keys) : len(tpm_keys) + len(rpm_keys)]
-            tpd_values = combined_tpm_rpm_values[len(tpm_keys) + len(rpm_keys) : len(tpm_keys) + len(rpm_keys) + len(tpd_keys)]
-            rpd_values = combined_tpm_rpm_values[len(tpm_keys) + len(rpm_keys) + len(tpd_keys) :]
+            rpm_values = combined_tpm_rpm_values[
+                len(tpm_keys) : len(tpm_keys) + len(rpm_keys)
+            ]
+            tpd_values = combined_tpm_rpm_values[
+                len(tpm_keys)
+                + len(rpm_keys) : len(tpm_keys)
+                + len(rpm_keys)
+                + len(tpd_keys)
+            ]
+            rpd_values = combined_tpm_rpm_values[
+                len(tpm_keys) + len(rpm_keys) + len(tpd_keys) :
+            ]
         else:
             tpm_values = None
             rpm_values = None
