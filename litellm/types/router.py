@@ -96,18 +96,16 @@ class ModelInfo(BaseModel):
     id: Optional[
         str
     ]  # Allow id to be optional on input, but it will always be present as a str in the model instance
-    db_model: bool = (
-        False  # used for proxy - to separate models which are stored in the db vs. config.
-    )
+    db_model: bool = False  # used for proxy - to separate models which are stored in the db vs. config.
     updated_at: Optional[datetime.datetime] = None
     updated_by: Optional[str] = None
 
     created_at: Optional[datetime.datetime] = None
     created_by: Optional[str] = None
 
-    base_model: Optional[str] = (
-        None  # specify if the base model is azure/gpt-3.5-turbo etc for accurate cost tracking
-    )
+    base_model: Optional[
+        str
+    ] = None  # specify if the base model is azure/gpt-3.5-turbo etc for accurate cost tracking
     tier: Optional[Literal["free", "paid"]] = None
 
     """
@@ -264,9 +262,9 @@ class GenericLiteLLMParams(CredentialLiteLLMParams, CustomPricingLiteLLMParams):
         if max_retries is not None and isinstance(max_retries, str):
             max_retries = int(max_retries)  # cast to int
         # We need to keep max_retries in args since it's a parameter of GenericLiteLLMParams
-        args["max_retries"] = (
-            max_retries  # Put max_retries back in args after popping it
-        )
+        args[
+            "max_retries"
+        ] = max_retries  # Put max_retries back in args after popping it
         super().__init__(**args, **params)
 
     def __contains__(self, key):

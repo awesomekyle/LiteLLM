@@ -112,9 +112,7 @@ async def get_all_team_memberships(
 ) -> List[LiteLLM_TeamMembership]:
     """Get all team memberships for a given user"""
     ## GET ALL MEMBERSHIPS ##
-    where_obj: Dict[str, Dict[str, List[str]]] = {
-        "team_id": {"in": team_ids}
-    }
+    where_obj: Dict[str, Dict[str, List[str]]] = {"team_id": {"in": team_ids}}
     if user_id is not None:
         where_obj["user_id"] = {"in": [user_id]}
     # if user_id is None:
