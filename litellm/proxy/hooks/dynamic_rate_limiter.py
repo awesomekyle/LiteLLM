@@ -78,6 +78,51 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
     def update_variables(self, llm_router: Router):
         self.llm_router = llm_router
 
+    def _get_priority_weight(self, priority: Optional[str]) -> float:
+        """Get the priority weight for rate limiting calculations."""
+        weight: float = 1
+        if (
+            litellm.priority_reservation is None
+            or priority not in litellm.priority_reservation
+        ):
+            verbose_proxy_logger.error(
+                "Priority Reservation not set. priority={}, but litellm.priority_reservation is {}.".format(
+                    priority, litellm.priority_reservation
+                )
+            )
+        elif priority is not None and litellm.priority_reservation is not None:
+            if os.getenv("LITELLM_LICENSE", None) is None:
+                verbose_proxy_logger.error(
+                    "PREMIUM FEATURE: Reserving tpm/rpm by priority is a premium feature. Please add a 'LITELLM_LICENSE' to your .env to enable this.\nGet a license: https://docs.litellm.ai/docs/proxy/enterprise."
+                )
+            else:
+                weight = litellm.priority_reservation[priority]
+        return weight
+
+    def _calculate_available_usage(
+        self, remaining: Optional[int], weight: float, active_projects: Optional[int]
+    ) -> Optional[int]:
+        """Calculate available usage based on remaining capacity, weight, and active projects."""
+        if remaining is None:
+            return None
+
+        if active_projects is not None:
+            available = int(remaining * weight / active_projects)
+        else:
+            available = int(remaining * weight)
+
+        return max(0, available) if available is not None else None
+
+    def _get_remaining_usage(
+        self, total: Optional[int], current: Optional[int]
+    ) -> Optional[int]:
+        """Calculate remaining usage from total and current usage."""
+        if total is not None and current is not None:
+            return total - current
+        elif total is not None:
+            return total
+        return None
+
     async def check_available_usage(
         self, model: str, priority: Optional[str] = None
     ) -> Tuple[
@@ -107,23 +152,7 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
             - available_rpd: int or null - always 0 or positive.
         """
         try:
-            weight: float = 1
-            if (
-                litellm.priority_reservation is None
-                or priority not in litellm.priority_reservation
-            ):
-                verbose_proxy_logger.error(
-                    "Priority Reservation not set. priority={}, but litellm.priority_reservation is {}.".format(
-                        priority, litellm.priority_reservation
-                    )
-                )
-            elif priority is not None and litellm.priority_reservation is not None:
-                if os.getenv("LITELLM_LICENSE", None) is None:
-                    verbose_proxy_logger.error(
-                        "PREMIUM FEATURE: Reserving tpm/rpm by priority is a premium feature. Please add a 'LITELLM_LICENSE' to your .env to enable this.\nGet a license: https://docs.litellm.ai/docs/proxy/enterprise."
-                    )
-                else:
-                    weight = litellm.priority_reservation[priority]
+            weight = self._get_priority_weight(priority)
 
             active_projects = await self.internal_usage_cache.async_get_cache(
                 model=model
@@ -135,56 +164,20 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
             model_group_info: Optional[
                 ModelGroupInfo
             ] = self.llm_router.get_model_group_info(model_group=model)
-            total_model_tpm: Optional[int] = None
-            total_model_rpm: Optional[int] = None
-            if model_group_info is not None:
-                if model_group_info.tpm is not None:
-                    total_model_tpm = model_group_info.tpm
-                if model_group_info.rpm is not None:
-                    total_model_rpm = model_group_info.rpm
 
-            remaining_model_tpm: Optional[int] = None
-            if total_model_tpm is not None and current_model_tpm is not None:
-                remaining_model_tpm = total_model_tpm - current_model_tpm
-            elif total_model_tpm is not None:
-                remaining_model_tpm = total_model_tpm
+            # Get total limits
+            total_model_tpm = model_group_info.tpm if model_group_info else None
+            total_model_rpm = model_group_info.rpm if model_group_info else None
+            total_model_tpd = model_group_info.tpd if model_group_info else None
+            total_model_rpd = model_group_info.rpd if model_group_info else None
 
-            remaining_model_rpm: Optional[int] = None
-            if total_model_rpm is not None and current_model_rpm is not None:
-                remaining_model_rpm = total_model_rpm - current_model_rpm
-            elif total_model_rpm is not None:
-                remaining_model_rpm = total_model_rpm
-
-            available_tpm: Optional[int] = None
-
-            if remaining_model_tpm is not None:
-                if active_projects is not None:
-                    available_tpm = int(remaining_model_tpm * weight / active_projects)
-                else:
-                    available_tpm = int(remaining_model_tpm * weight)
-
-            if available_tpm is not None and available_tpm < 0:
-                available_tpm = 0
-
-            available_rpm: Optional[int] = None
-
-            if remaining_model_rpm is not None:
-                if active_projects is not None:
-                    available_rpm = int(remaining_model_rpm * weight / active_projects)
-                else:
-                    available_rpm = int(remaining_model_rpm * weight)
-
-            if available_rpm is not None and available_rpm < 0:
-                available_rpm = 0
-
-            # Add daily tracking logic
-            total_model_tpd: Optional[int] = None
-            total_model_rpd: Optional[int] = None
-            if model_group_info is not None:
-                if model_group_info.tpd is not None:
-                    total_model_tpd = model_group_info.tpd
-                if model_group_info.rpd is not None:
-                    total_model_rpd = model_group_info.rpd
+            # Calculate remaining usage
+            remaining_model_tpm = self._get_remaining_usage(
+                total_model_tpm, current_model_tpm
+            )
+            remaining_model_rpm = self._get_remaining_usage(
+                total_model_rpm, current_model_rpm
+            )
 
             # Get daily usage
             (
@@ -192,37 +185,26 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                 current_model_rpd,
             ) = await self.llm_router.get_model_group_daily_usage(model_group=model)
 
-            remaining_model_tpd: Optional[int] = None
-            if total_model_tpd is not None and current_model_tpd is not None:
-                remaining_model_tpd = total_model_tpd - current_model_tpd
-            elif total_model_tpd is not None:
-                remaining_model_tpd = total_model_tpd
+            remaining_model_tpd = self._get_remaining_usage(
+                total_model_tpd, current_model_tpd
+            )
+            remaining_model_rpd = self._get_remaining_usage(
+                total_model_rpd, current_model_rpd
+            )
 
-            remaining_model_rpd: Optional[int] = None
-            if total_model_rpd is not None and current_model_rpd is not None:
-                remaining_model_rpd = total_model_rpd - current_model_rpd
-            elif total_model_rpd is not None:
-                remaining_model_rpd = total_model_rpd
-
-            available_tpd: Optional[int] = None
-            if remaining_model_tpd is not None:
-                if active_projects is not None:
-                    available_tpd = int(remaining_model_tpd * weight / active_projects)
-                else:
-                    available_tpd = int(remaining_model_tpd * weight)
-
-            if available_tpd is not None and available_tpd < 0:
-                available_tpd = 0
-
-            available_rpd: Optional[int] = None
-            if remaining_model_rpd is not None:
-                if active_projects is not None:
-                    available_rpd = int(remaining_model_rpd * weight / active_projects)
-                else:
-                    available_rpd = int(remaining_model_rpd * weight)
-
-            if available_rpd is not None and available_rpd < 0:
-                available_rpd = 0
+            # Calculate available usage
+            available_tpm = self._calculate_available_usage(
+                remaining_model_tpm, weight, active_projects
+            )
+            available_rpm = self._calculate_available_usage(
+                remaining_model_rpm, weight, active_projects
+            )
+            available_tpd = self._calculate_available_usage(
+                remaining_model_tpd, weight, active_projects
+            )
+            available_rpd = self._calculate_available_usage(
+                remaining_model_rpd, weight, active_projects
+            )
 
             return (
                 available_tpm,

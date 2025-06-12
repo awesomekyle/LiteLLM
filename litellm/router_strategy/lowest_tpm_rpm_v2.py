@@ -1,7 +1,7 @@
 #### What this does ####
 #   identifies lowest tpm deployment
 import random
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import httpx
 
@@ -355,6 +355,73 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             )
             pass
 
+    def _get_deployment_limit(self, deployment: Dict, limit_type: str) -> float:
+        """Get deployment limit (tpm, rpm, tpd, rpd) from deployment configuration."""
+        limit = deployment.get(limit_type)
+        if limit is None:
+            limit = deployment.get("litellm_params", {}).get(limit_type)
+        if limit is None:
+            limit = deployment.get("model_info", {}).get(limit_type)
+        return limit if limit is not None else float("inf")
+
+    def _find_deployment_by_id(
+        self, healthy_deployments: List[Dict], item_id: str
+    ) -> Optional[Dict]:
+        """Find deployment in healthy_deployments by item_id."""
+        for m in healthy_deployments:
+            if item_id == m["model_info"]["id"]:
+                return m
+        return None
+
+    def _check_deployment_limits(
+        self,
+        item: str,
+        item_tpm: int,
+        input_tokens: int,
+        deployment: Dict,
+        rpm_dict: Dict,
+        tpd_dict: Optional[Dict],
+        rpd_dict: Optional[Dict],
+    ) -> bool:
+        """Check if deployment exceeds any limits. Returns True if within limits."""
+        deployment_tpm = self._get_deployment_limit(deployment, "tpm")
+        deployment_rpm = self._get_deployment_limit(deployment, "rpm")
+        deployment_tpd = self._get_deployment_limit(deployment, "tpd")
+        deployment_rpd = self._get_deployment_limit(deployment, "rpd")
+
+        # Check TPM limit
+        if item_tpm + input_tokens > deployment_tpm:
+            return False
+
+        # Check RPM limit
+        if (
+            rpm_dict is not None
+            and item in rpm_dict
+            and rpm_dict[item] is not None
+            and rpm_dict[item] + 1 >= deployment_rpm
+        ):
+            return False
+
+        # Check daily token limit
+        if (
+            tpd_dict is not None
+            and item in tpd_dict
+            and tpd_dict[item] is not None
+            and tpd_dict[item] + input_tokens >= deployment_tpd
+        ):
+            return False
+
+        # Check daily request limit
+        if (
+            rpd_dict is not None
+            and item in rpd_dict
+            and rpd_dict[item] is not None
+            and rpd_dict[item] + 1 >= deployment_rpd
+        ):
+            return False
+
+        return True
+
     def _return_potential_deployments(
         self,
         healthy_deployments: List[Dict],
@@ -366,85 +433,28 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
     ):
         lowest_tpm = float("inf")
         potential_deployments = []  # if multiple deployments have the same low value
+
         for item, item_tpm in all_deployments.items():
-            ## get the item from model list
-            _deployment = None
-            item = item.split(":")[0]
-            for m in healthy_deployments:
-                if item == m["model_info"]["id"]:
-                    _deployment = m
-            if _deployment is None:
+            # Get the item from model list
+            item_id = item.split(":")[0]
+            deployment = self._find_deployment_by_id(healthy_deployments, item_id)
+
+            if deployment is None or item_tpm is None:
                 continue  # skip to next one
-            elif item_tpm is None:
-                continue  # skip if unhealthy deployment
 
-            _deployment_tpm = None
-            if _deployment_tpm is None:
-                _deployment_tpm = _deployment.get("tpm")
-            if _deployment_tpm is None:
-                _deployment_tpm = _deployment.get("litellm_params", {}).get("tpm")
-            if _deployment_tpm is None:
-                _deployment_tpm = _deployment.get("model_info", {}).get("tpm")
-            if _deployment_tpm is None:
-                _deployment_tpm = float("inf")
-
-            _deployment_rpm = None
-            if _deployment_rpm is None:
-                _deployment_rpm = _deployment.get("rpm")
-            if _deployment_rpm is None:
-                _deployment_rpm = _deployment.get("litellm_params", {}).get("rpm")
-            if _deployment_rpm is None:
-                _deployment_rpm = _deployment.get("model_info", {}).get("rpm")
-            if _deployment_rpm is None:
-                _deployment_rpm = float("inf")
-
-            # Get daily limits
-            _deployment_tpd = None
-            if _deployment_tpd is None:
-                _deployment_tpd = _deployment.get("tpd")
-            if _deployment_tpd is None:
-                _deployment_tpd = _deployment.get("litellm_params", {}).get("tpd")
-            if _deployment_tpd is None:
-                _deployment_tpd = _deployment.get("model_info", {}).get("tpd")
-            if _deployment_tpd is None:
-                _deployment_tpd = float("inf")
-
-            _deployment_rpd = None
-            if _deployment_rpd is None:
-                _deployment_rpd = _deployment.get("rpd")
-            if _deployment_rpd is None:
-                _deployment_rpd = _deployment.get("litellm_params", {}).get("rpd")
-            if _deployment_rpd is None:
-                _deployment_rpd = _deployment.get("model_info", {}).get("rpd")
-            if _deployment_rpd is None:
-                _deployment_rpd = float("inf")
-            if item_tpm + input_tokens > _deployment_tpm:
-                continue
-            elif (
-                (rpm_dict is not None and item in rpm_dict)
-                and rpm_dict[item] is not None
-                and (rpm_dict[item] + 1 >= _deployment_rpm)
+            # Check if deployment is within all limits
+            if not self._check_deployment_limits(
+                item, item_tpm, input_tokens, deployment, rpm_dict, tpd_dict, rpd_dict
             ):
                 continue
-            # Check daily token limit
-            elif (
-                (tpd_dict is not None and item in tpd_dict)
-                and tpd_dict[item] is not None
-                and (tpd_dict[item] + input_tokens >= _deployment_tpd)
-            ):
-                continue
-            # Check daily request limit
-            elif (
-                (rpd_dict is not None and item in rpd_dict)
-                and rpd_dict[item] is not None
-                and (rpd_dict[item] + 1 >= _deployment_rpd)
-            ):
-                continue
-            elif item_tpm == lowest_tpm:
-                potential_deployments.append(_deployment)
+
+            # Track deployments with lowest TPM
+            if item_tpm == lowest_tpm:
+                potential_deployments.append(deployment)
             elif item_tpm < lowest_tpm:
                 lowest_tpm = item_tpm
-                potential_deployments = [_deployment]
+                potential_deployments = [deployment]
+
         return potential_deployments
 
     def _common_checks_available_deployment(  # noqa: PLR0915
@@ -546,6 +556,72 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         else:
             return None
 
+    def _create_cache_keys(
+        self, healthy_deployments: list, current_minute: str, current_day: str
+    ) -> Tuple[List[str], List[str], List[str], List[str]]:
+        """Create cache keys for TPM, RPM, TPD, and RPD tracking."""
+        tpm_keys = []
+        rpm_keys = []
+        tpd_keys = []
+        rpd_keys = []
+
+        for m in healthy_deployments:
+            if isinstance(m, dict):
+                id = m.get("model_info", {}).get("id")
+                deployment_name = m.get("litellm_params", {}).get("model")
+                tpm_key = "{}:{}:tpm:{}".format(id, deployment_name, current_minute)
+                rpm_key = "{}:{}:rpm:{}".format(id, deployment_name, current_minute)
+                tpd_key = "{}:{}:tpd:{}".format(id, deployment_name, current_day)
+                rpd_key = "{}:{}:rpd:{}".format(id, deployment_name, current_day)
+
+                tpm_keys.append(tpm_key)
+                rpm_keys.append(rpm_key)
+                tpd_keys.append(tpd_key)
+                rpd_keys.append(rpd_key)
+
+        return tpm_keys, rpm_keys, tpd_keys, rpd_keys
+
+    def _split_cache_values(
+        self, combined_values: List, tpm_keys: List, rpm_keys: List, tpd_keys: List
+    ) -> Tuple[List, List, List, List]:
+        """Split combined cache values into separate TPM, RPM, TPD, and RPD lists."""
+        if combined_values is None:
+            return None, None, None, None
+
+        tpm_values = combined_values[: len(tpm_keys)]
+        rpm_values = combined_values[len(tpm_keys) : len(tpm_keys) + len(rpm_keys)]
+        tpd_values = combined_values[
+            len(tpm_keys)
+            + len(rpm_keys) : len(tpm_keys)
+            + len(rpm_keys)
+            + len(tpd_keys)
+        ]
+        rpd_values = combined_values[len(tpm_keys) + len(rpm_keys) + len(tpd_keys) :]
+
+        return tpm_values, rpm_values, tpd_values, rpd_values
+
+    def _build_deployment_dict_for_error(
+        self, healthy_deployments: list, tpm_values: List, rpm_values: List
+    ) -> Dict:
+        """Build deployment dictionary for error reporting."""
+        deployment_dict = {}
+        for index, _deployment in enumerate(healthy_deployments):
+            if isinstance(_deployment, dict):
+                id = _deployment.get("model_info", {}).get("id")
+                deployment_tpm = self._get_deployment_limit(_deployment, "tpm")
+                deployment_rpm = self._get_deployment_limit(_deployment, "rpm")
+
+                current_tpm = tpm_values[index] if tpm_values else 0
+                current_rpm = rpm_values[index] if rpm_values else 0
+
+                deployment_dict[id] = {
+                    "current_tpm": current_tpm,
+                    "tpm_limit": deployment_tpm,
+                    "current_rpm": current_rpm,
+                    "rpm_limit": deployment_rpm,
+                }
+        return deployment_dict
+
     async def async_get_available_deployments(
         self,
         model_group: str,
@@ -567,51 +643,18 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         current_minute = dt.strftime("%H-%M")
         current_day = dt.strftime("%Y-%m-%d")
 
-        tpm_keys = []
-        rpm_keys = []
-        tpd_keys = []
-        rpd_keys = []
-        for m in healthy_deployments:
-            if isinstance(m, dict):
-                id = m.get("model_info", {}).get(
-                    "id"
-                )  # a deployment should always have an 'id'. this is set in router.py
-                deployment_name = m.get("litellm_params", {}).get("model")
-                tpm_key = "{}:{}:tpm:{}".format(id, deployment_name, current_minute)
-                rpm_key = "{}:{}:rpm:{}".format(id, deployment_name, current_minute)
-                tpd_key = "{}:{}:tpd:{}".format(id, deployment_name, current_day)
-                rpd_key = "{}:{}:rpd:{}".format(id, deployment_name, current_day)
-
-                tpm_keys.append(tpm_key)
-                rpm_keys.append(rpm_key)
-                tpd_keys.append(tpd_key)
-                rpd_keys.append(rpd_key)
+        tpm_keys, rpm_keys, tpd_keys, rpd_keys = self._create_cache_keys(
+            healthy_deployments, current_minute, current_day
+        )
 
         combined_tpm_rpm_keys = tpm_keys + rpm_keys + tpd_keys + rpd_keys
-
         combined_tpm_rpm_values = await self.router_cache.async_batch_get_cache(
             keys=combined_tpm_rpm_keys
-        )  # [1, 2, None, ..]
+        )
 
-        if combined_tpm_rpm_values is not None:
-            tpm_values = combined_tpm_rpm_values[: len(tpm_keys)]
-            rpm_values = combined_tpm_rpm_values[
-                len(tpm_keys) : len(tpm_keys) + len(rpm_keys)
-            ]
-            tpd_values = combined_tpm_rpm_values[
-                len(tpm_keys)
-                + len(rpm_keys) : len(tpm_keys)
-                + len(rpm_keys)
-                + len(tpd_keys)
-            ]
-            rpd_values = combined_tpm_rpm_values[
-                len(tpm_keys) + len(rpm_keys) + len(tpd_keys) :
-            ]
-        else:
-            tpm_values = None
-            rpm_values = None
-            tpd_values = None
-            rpd_values = None
+        tpm_values, rpm_values, tpd_values, rpd_values = self._split_cache_values(
+            combined_tpm_rpm_values, tpm_keys, rpm_keys, tpd_keys
+        )
 
         deployment = self._common_checks_available_deployment(
             model_group=model_group,
@@ -628,68 +671,24 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             input=input,
         )
 
-        try:
-            assert deployment is not None
+        if deployment is not None:
             return deployment
-        except Exception:
-            ### GET THE DICT OF TPM / RPM + LIMITS PER DEPLOYMENT ###
-            deployment_dict = {}
-            for index, _deployment in enumerate(healthy_deployments):
-                if isinstance(_deployment, dict):
-                    id = _deployment.get("model_info", {}).get("id")
-                    ### GET DEPLOYMENT TPM LIMIT ###
-                    _deployment_tpm = None
-                    if _deployment_tpm is None:
-                        _deployment_tpm = _deployment.get("tpm", None)
-                    if _deployment_tpm is None:
-                        _deployment_tpm = _deployment.get("litellm_params", {}).get(
-                            "tpm", None
-                        )
-                    if _deployment_tpm is None:
-                        _deployment_tpm = _deployment.get("model_info", {}).get(
-                            "tpm", None
-                        )
-                    if _deployment_tpm is None:
-                        _deployment_tpm = float("inf")
 
-                    ### GET CURRENT TPM ###
-                    current_tpm = tpm_values[index] if tpm_values else 0
-
-                    ### GET DEPLOYMENT TPM LIMIT ###
-                    _deployment_rpm = None
-                    if _deployment_rpm is None:
-                        _deployment_rpm = _deployment.get("rpm", None)
-                    if _deployment_rpm is None:
-                        _deployment_rpm = _deployment.get("litellm_params", {}).get(
-                            "rpm", None
-                        )
-                    if _deployment_rpm is None:
-                        _deployment_rpm = _deployment.get("model_info", {}).get(
-                            "rpm", None
-                        )
-                    if _deployment_rpm is None:
-                        _deployment_rpm = float("inf")
-
-                    ### GET CURRENT RPM ###
-                    current_rpm = rpm_values[index] if rpm_values else 0
-
-                    deployment_dict[id] = {
-                        "current_tpm": current_tpm,
-                        "tpm_limit": _deployment_tpm,
-                        "current_rpm": current_rpm,
-                        "rpm_limit": _deployment_rpm,
-                    }
-            raise litellm.RateLimitError(
-                message=f"{RouterErrors.no_deployments_available.value}. Passed model={model_group}. Deployments={deployment_dict}",
-                llm_provider="",
-                model=model_group,
-                response=httpx.Response(
-                    status_code=429,
-                    content="",
-                    headers={"retry-after": str(60)},  # type: ignore
-                    request=httpx.Request(method="tpm_rpm_limits", url="https://github.com/BerriAI/litellm"),  # type: ignore
-                ),
-            )
+        # Build error information and raise exception
+        deployment_dict = self._build_deployment_dict_for_error(
+            healthy_deployments, tpm_values, rpm_values
+        )
+        raise litellm.RateLimitError(
+            message=f"{RouterErrors.no_deployments_available.value}. Passed model={model_group}. Deployments={deployment_dict}",
+            llm_provider="",
+            model=model_group,
+            response=httpx.Response(
+                status_code=429,
+                content="",
+                headers={"retry-after": str(60)},  # type: ignore
+                request=httpx.Request(method="tpm_rpm_limits", url="https://github.com/BerriAI/litellm"),  # type: ignore
+            ),
+        )
 
     def get_available_deployments(
         self,
@@ -710,38 +709,23 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         dt = get_utc_datetime()
         current_minute = dt.strftime("%H-%M")
         current_day = dt.strftime("%Y-%m-%d")
-        tpm_keys = []
-        rpm_keys = []
-        tpd_keys = []
-        rpd_keys = []
-        for m in healthy_deployments:
-            if isinstance(m, dict):
-                id = m.get("model_info", {}).get(
-                    "id"
-                )  # a deployment should always have an 'id'. this is set in router.py
-                deployment_name = m.get("litellm_params", {}).get("model")
-                tpm_key = "{}:{}:tpm:{}".format(id, deployment_name, current_minute)
-                rpm_key = "{}:{}:rpm:{}".format(id, deployment_name, current_minute)
-                tpd_key = "{}:{}:tpd:{}".format(id, deployment_name, current_day)
-                rpd_key = "{}:{}:rpd:{}".format(id, deployment_name, current_day)
 
-                tpm_keys.append(tpm_key)
-                rpm_keys.append(rpm_key)
-                tpd_keys.append(tpd_key)
-                rpd_keys.append(rpd_key)
+        tpm_keys, rpm_keys, tpd_keys, rpd_keys = self._create_cache_keys(
+            healthy_deployments, current_minute, current_day
+        )
 
         tpm_values = self.router_cache.batch_get_cache(
             keys=tpm_keys, parent_otel_span=parent_otel_span
-        )  # [1, 2, None, ..]
+        )
         rpm_values = self.router_cache.batch_get_cache(
             keys=rpm_keys, parent_otel_span=parent_otel_span
-        )  # [1, 2, None, ..]
+        )
         tpd_values = self.router_cache.batch_get_cache(
             keys=tpd_keys, parent_otel_span=parent_otel_span
-        )  # [1, 2, None, ..]
+        )
         rpd_values = self.router_cache.batch_get_cache(
             keys=rpd_keys, parent_otel_span=parent_otel_span
-        )  # [1, 2, None, ..]
+        )
 
         deployment = self._common_checks_available_deployment(
             model_group=model_group,
@@ -758,57 +742,13 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             input=input,
         )
 
-        try:
-            assert deployment is not None
+        if deployment is not None:
             return deployment
-        except Exception:
-            ### GET THE DICT OF TPM / RPM + LIMITS PER DEPLOYMENT ###
-            deployment_dict = {}
-            for index, _deployment in enumerate(healthy_deployments):
-                if isinstance(_deployment, dict):
-                    id = _deployment.get("model_info", {}).get("id")
-                    ### GET DEPLOYMENT TPM LIMIT ###
-                    _deployment_tpm = None
-                    if _deployment_tpm is None:
-                        _deployment_tpm = _deployment.get("tpm", None)
-                    if _deployment_tpm is None:
-                        _deployment_tpm = _deployment.get("litellm_params", {}).get(
-                            "tpm", None
-                        )
-                    if _deployment_tpm is None:
-                        _deployment_tpm = _deployment.get("model_info", {}).get(
-                            "tpm", None
-                        )
-                    if _deployment_tpm is None:
-                        _deployment_tpm = float("inf")
 
-                    ### GET CURRENT TPM ###
-                    current_tpm = tpm_values[index] if tpm_values else 0
-
-                    ### GET DEPLOYMENT TPM LIMIT ###
-                    _deployment_rpm = None
-                    if _deployment_rpm is None:
-                        _deployment_rpm = _deployment.get("rpm", None)
-                    if _deployment_rpm is None:
-                        _deployment_rpm = _deployment.get("litellm_params", {}).get(
-                            "rpm", None
-                        )
-                    if _deployment_rpm is None:
-                        _deployment_rpm = _deployment.get("model_info", {}).get(
-                            "rpm", None
-                        )
-                    if _deployment_rpm is None:
-                        _deployment_rpm = float("inf")
-
-                    ### GET CURRENT RPM ###
-                    current_rpm = rpm_values[index] if rpm_values else 0
-
-                    deployment_dict[id] = {
-                        "current_tpm": current_tpm,
-                        "tpm_limit": _deployment_tpm,
-                        "current_rpm": current_rpm,
-                        "rpm_limit": _deployment_rpm,
-                    }
-            raise ValueError(
-                f"{RouterErrors.no_deployments_available.value}. Passed model={model_group}. Deployments={deployment_dict}"
-            )
+        # Build error information and raise exception
+        deployment_dict = self._build_deployment_dict_for_error(
+            healthy_deployments, tpm_values, rpm_values
+        )
+        raise ValueError(
+            f"{RouterErrors.no_deployments_available.value}. Passed model={model_group}. Deployments={deployment_dict}"
+        )
