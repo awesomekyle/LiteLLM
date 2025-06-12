@@ -81,22 +81,24 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
     async def check_available_usage(
         self, model: str, priority: Optional[str] = None
     ) -> Tuple[
-        Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]
+        Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]
     ]:
         """
-        For a given model, get its available tpm
+        For a given model, get its available tpm/rpm/tpd/rpd
 
         Params:
         - model: str, the name of the model in the router model_list
         - priority: Optional[str], the priority for the request.
 
         Returns
-        - Tuple[available_tpm, available_tpm, model_tpm, model_rpm, active_projects]
+        - Tuple[available_tpm, available_rpm, model_tpm, model_rpm, active_projects, available_tpd, available_rpd]
             - available_tpm: int or null - always 0 or positive.
-            - available_tpm: int or null - always 0 or positive.
+            - available_rpm: int or null - always 0 or positive.
             - remaining_model_tpm: int or null. If available tpm is int, then this will be too.
             - remaining_model_rpm: int or null. If available rpm is int, then this will be too.
             - active_projects: int or null
+            - available_tpd: int or null - always 0 or positive.
+            - available_rpd: int or null - always 0 or positive.
         """
         try:
             weight: float = 1
@@ -168,12 +170,62 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
 
             if available_rpm is not None and available_rpm < 0:
                 available_rpm = 0
+            
+            # Add daily tracking logic
+            total_model_tpd: Optional[int] = None
+            total_model_rpd: Optional[int] = None
+            if model_group_info is not None:
+                if model_group_info.tpd is not None:
+                    total_model_tpd = model_group_info.tpd
+                if model_group_info.rpd is not None:
+                    total_model_rpd = model_group_info.rpd
+
+            # Get daily usage
+            (
+                current_model_tpd,
+                current_model_rpd,
+            ) = await self.llm_router.get_model_group_daily_usage(model_group=model)
+
+            remaining_model_tpd: Optional[int] = None
+            if total_model_tpd is not None and current_model_tpd is not None:
+                remaining_model_tpd = total_model_tpd - current_model_tpd
+            elif total_model_tpd is not None:
+                remaining_model_tpd = total_model_tpd
+
+            remaining_model_rpd: Optional[int] = None
+            if total_model_rpd is not None and current_model_rpd is not None:
+                remaining_model_rpd = total_model_rpd - current_model_rpd
+            elif total_model_rpd is not None:
+                remaining_model_rpd = total_model_rpd
+
+            available_tpd: Optional[int] = None
+            if remaining_model_tpd is not None:
+                if active_projects is not None:
+                    available_tpd = int(remaining_model_tpd * weight / active_projects)
+                else:
+                    available_tpd = int(remaining_model_tpd * weight)
+
+            if available_tpd is not None and available_tpd < 0:
+                available_tpd = 0
+
+            available_rpd: Optional[int] = None
+            if remaining_model_rpd is not None:
+                if active_projects is not None:
+                    available_rpd = int(remaining_model_rpd * weight / active_projects)
+                else:
+                    available_rpd = int(remaining_model_rpd * weight)
+
+            if available_rpd is not None and available_rpd < 0:
+                available_rpd = 0
+
             return (
                 available_tpm,
                 available_rpm,
                 remaining_model_tpm,
                 remaining_model_rpm,
                 active_projects,
+                available_tpd,
+                available_rpd,
             )
         except Exception as e:
             verbose_proxy_logger.exception(
@@ -181,7 +233,7 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                     str(e)
                 )
             )
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
 
     async def async_pre_call_hook(
         self,
@@ -216,6 +268,8 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                 model_tpm,
                 model_rpm,
                 active_projects,
+                available_tpd,
+                available_rpd,
             ) = await self.check_available_usage(
                 model=data["model"], priority=key_priority
             )
@@ -245,7 +299,31 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                         )
                     },
                 )
-            elif available_rpm is not None or available_tpm is not None:
+            ### CHECK TPD ###
+            elif available_tpd is not None and available_tpd == 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "Key={} over available TPD={}. Active keys={}".format(
+                            user_api_key_dict.api_key,
+                            available_tpd,
+                            active_projects,
+                        )
+                    },
+                )
+            ### CHECK RPD ###
+            elif available_rpd is not None and available_rpd == 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "Key={} over available RPD={}. Active keys={}".format(
+                            user_api_key_dict.api_key,
+                            available_rpd,
+                            active_projects,
+                        )
+                    },
+                )
+            elif available_rpm is not None or available_tpm is not None or available_rpd is not None or available_tpd is not None:
                 ## UPDATE CACHE WITH ACTIVE PROJECT
                 asyncio.create_task(
                     self.internal_usage_cache.async_set_cache_sadd(  # this is a set
@@ -277,6 +355,8 @@ class _PROXY_DynamicRateLimitHandler(CustomLogger):
                     model_tpm,
                     model_rpm,
                     active_projects,
+                    available_tpd,
+                    available_rpd,
                 ) = await self.check_available_usage(
                     model=model_info["model_name"], priority=key_priority
                 )

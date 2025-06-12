@@ -5391,6 +5391,79 @@ class Router:
                     rpm_usage += t
         return tpm_usage, rpm_usage
 
+    async def get_model_group_daily_usage(
+        self, model_group: str
+    ) -> Tuple[Optional[int], Optional[int]]:
+        """
+        Returns current tpd/rpd usage for model group
+
+        Parameters:
+        - model_group: str - the received model name from the user (can be a wildcard route).
+
+        Returns:
+        - usage: Tuple[tpd, rpd]
+        """
+        dt = get_utc_datetime()
+        current_day = dt.strftime(
+            "%Y-%m-%d"
+        )  # use the same timezone regardless of system clock
+        tpd_keys: List[str] = []
+        rpd_keys: List[str] = []
+
+        model_list = self.get_model_list(model_name=model_group)
+        if model_list is None:  # no matching deployments
+            return None, None
+
+        for model in model_list:
+            id: Optional[str] = model.get("model_info", {}).get("id")  # type: ignore
+            litellm_model: Optional[str] = model["litellm_params"].get(
+                "model"
+            )  # USE THE MODEL SENT TO litellm.completion() - consistent with how global_router cache is written.
+            if id is None or litellm_model is None:
+                continue
+            tpd_keys.append(
+                RouterCacheEnum.TPD.value.format(
+                    id=id,
+                    model=litellm_model,
+                    current_day=current_day,
+                )
+            )
+            rpd_keys.append(
+                RouterCacheEnum.RPD.value.format(
+                    id=id,
+                    model=litellm_model,
+                    current_day=current_day,
+                )
+            )
+        combined_tpd_rpd_keys = tpd_keys + rpd_keys
+
+        combined_tpd_rpd_values = await self.cache.async_batch_get_cache(
+            keys=combined_tpd_rpd_keys
+        )
+        if combined_tpd_rpd_values is None:
+            return None, None
+
+        # split tpd and rpd values
+        tpd_values = combined_tpd_rpd_values[: len(tpd_keys)]
+        rpd_values = combined_tpd_rpd_values[len(tpd_keys) :]
+
+        tpd_usage: Optional[int] = None
+        rpd_usage: Optional[int] = None
+
+        if tpd_values is not None and len(tpd_values) > 0:
+            tpd_usage = 0
+            for value in tpd_values:
+                if value is not None:
+                    tpd_usage += int(value)
+
+        if rpd_values is not None and len(rpd_values) > 0:
+            rpd_usage = 0
+            for value in rpd_values:
+                if value is not None:
+                    rpd_usage += int(value)
+
+        return tpd_usage, rpd_usage
+
     @lru_cache(maxsize=DEFAULT_MAX_LRU_CACHE_SIZE)
     def _cached_get_model_group_info(
         self, model_group: str

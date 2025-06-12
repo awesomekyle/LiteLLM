@@ -182,6 +182,8 @@ class GenericLiteLLMParams(CredentialLiteLLMParams, CustomPricingLiteLLMParams):
     custom_llm_provider: Optional[str] = None
     tpm: Optional[int] = None
     rpm: Optional[int] = None
+    tpd: Optional[int] = None
+    rpd: Optional[int] = None
     timeout: Optional[Union[float, str, httpx.Timeout]] = (
         None  # if str, pass in as os.environ/
     )
@@ -213,6 +215,8 @@ class GenericLiteLLMParams(CredentialLiteLLMParams, CustomPricingLiteLLMParams):
         max_retries: Optional[Union[int, str]] = None,
         tpm: Optional[int] = None,
         rpm: Optional[int] = None,
+        tpd: Optional[int] = None,
+        rpd: Optional[int] = None,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
         api_version: Optional[str] = None,
@@ -297,6 +301,8 @@ class LiteLLM_Params(GenericLiteLLMParams):
         max_retries: Optional[Union[int, str]] = None,
         tpm: Optional[int] = None,
         rpm: Optional[int] = None,
+        tpd: Optional[int] = None,
+        rpd: Optional[int] = None,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
         api_version: Optional[str] = None,
@@ -365,6 +371,8 @@ class LiteLLMParamsTypedDict(TypedDict, total=False):
     custom_llm_provider: Optional[str]
     tpm: Optional[int]
     rpm: Optional[int]
+    tpd: Optional[int]
+    rpd: Optional[int]
     order: Optional[int]
     weight: Optional[int]
     max_parallel_requests: Optional[int]
@@ -567,6 +575,8 @@ class ModelGroupInfo(BaseModel):
     ] = Field(default="chat")
     tpm: Optional[int] = None
     rpm: Optional[int] = None
+    tpd: Optional[int] = None
+    rpd: Optional[int] = None
     supports_parallel_function_calling: bool = Field(default=False)
     supports_vision: bool = Field(default=False)
     supports_web_search: bool = Field(default=False)
@@ -705,6 +715,8 @@ class RoutingStrategy(enum.Enum):
 class RouterCacheEnum(enum.Enum):
     TPM = "global_router:{id}:{model}:tpm:{current_minute}"
     RPM = "global_router:{id}:{model}:rpm:{current_minute}"
+    TPD = "global_router:{id}:{model}:tpd:{current_day}"
+    RPD = "global_router:{id}:{model}:rpd:{current_day}"
 
 
 class GenericBudgetWindowDetails(BaseModel):
