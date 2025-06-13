@@ -268,13 +268,19 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             self.router_cache.increment_cache(
                 key=tpm_key, value=total_tokens, ttl=self.routing_args.ttl
             )
-            ## TPD (daily tokens) - 24 hour TTL
-            self.router_cache.increment_cache(
-                key=tpd_key, value=total_tokens, ttl=24 * 60 * 60  # 24 hours
+            ## TPD (daily tokens) - sliding window implementation  
+            self._update_sliding_window_cache(
+                id=id,
+                model=model,
+                value=total_tokens,
+                window_type="tpd",
             )
-            ## RPD (daily requests) - 24 hour TTL
-            self.router_cache.increment_cache(
-                key=rpd_key, value=1, ttl=24 * 60 * 60  # 24 hours
+            ## RPD (daily requests) - sliding window implementation
+            self._update_sliding_window_cache(
+                id=id,
+                model=model,
+                value=1,
+                window_type="rpd",
             )
             ### TESTING ###
             if self.test_flag:
@@ -286,6 +292,57 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 )
             )
             pass
+
+    def _update_sliding_window_cache(
+        self,
+        id: str,
+        model: str,
+        value: int,
+        window_type: str,  # "tpd" or "rpd"
+    ):
+        """
+        Update sliding window cache for RPD/TPD tracking (sync version).
+        Uses a 24-hour sliding window instead of calendar day.
+        """
+        import time
+        from litellm.types.router import RouterCacheEnum
+        
+        # Define window size (24 hours in seconds)
+        window_size = 24 * 60 * 60
+        now_timestamp = int(time.time())
+        
+        # Get the appropriate cache keys
+        if window_type == "tpd":
+            window_key = RouterCacheEnum.TPD_SLIDING_WINDOW.value.format(id=id, model=model)
+            counter_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(id=id, model=model)
+        elif window_type == "rpd":
+            window_key = RouterCacheEnum.RPD_SLIDING_WINDOW.value.format(id=id, model=model)
+            counter_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(id=id, model=model)
+        else:
+            raise ValueError(f"Invalid window_type: {window_type}")
+        
+        # Get current window start time
+        window_start = self.router_cache.get_cache(key=window_key)
+        
+        if window_start is None or (now_timestamp - int(window_start)) >= window_size:
+            # Reset window and counter - start new 24-hour window
+            self.router_cache.set_cache(
+                key=window_key,
+                value=now_timestamp,
+                ttl=window_size,
+            )
+            self.router_cache.set_cache(
+                key=counter_key,
+                value=value,
+                ttl=window_size,
+            )
+        else:
+            # Increment counter within existing window
+            self.router_cache.increment_cache(
+                key=counter_key,
+                value=value,
+                ttl=window_size,
+            )
 
     async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
         try:
@@ -329,18 +386,20 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 ttl=self.routing_args.ttl,
                 parent_otel_span=parent_otel_span,
             )
-            ## TPD (daily tokens) - 24 hour TTL
-            await self.router_cache.async_increment_cache(
-                key=tpd_key,
+            ## TPD (daily tokens) - sliding window implementation
+            await self._async_update_sliding_window_cache(
+                id=id,
+                model=model,
                 value=total_tokens,
-                ttl=24 * 60 * 60,  # 24 hours
+                window_type="tpd",
                 parent_otel_span=parent_otel_span,
             )
-            ## RPD (daily requests) - 24 hour TTL
-            await self.router_cache.async_increment_cache(
-                key=rpd_key,
+            ## RPD (daily requests) - sliding window implementation  
+            await self._async_update_sliding_window_cache(
+                id=id,
+                model=model,
                 value=1,
-                ttl=24 * 60 * 60,  # 24 hours
+                window_type="rpd",
                 parent_otel_span=parent_otel_span,
             )
 
@@ -354,6 +413,64 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 )
             )
             pass
+
+    async def _async_update_sliding_window_cache(
+        self,
+        id: str,
+        model: str,
+        value: int,
+        window_type: str,  # "tpd" or "rpd"
+        parent_otel_span=None,
+    ):
+        """
+        Update sliding window cache for RPD/TPD tracking.
+        Uses a 24-hour sliding window instead of calendar day.
+        """
+        import time
+        from litellm.types.router import RouterCacheEnum
+        
+        # Define window size (24 hours in seconds)
+        window_size = 24 * 60 * 60
+        now_timestamp = int(time.time())
+        
+        # Get the appropriate cache keys
+        if window_type == "tpd":
+            window_key = RouterCacheEnum.TPD_SLIDING_WINDOW.value.format(id=id, model=model)
+            counter_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(id=id, model=model)
+        elif window_type == "rpd":
+            window_key = RouterCacheEnum.RPD_SLIDING_WINDOW.value.format(id=id, model=model)
+            counter_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(id=id, model=model)
+        else:
+            raise ValueError(f"Invalid window_type: {window_type}")
+        
+        # Get current window start time
+        window_start = await self.router_cache.async_get_cache(
+            key=window_key,
+            parent_otel_span=parent_otel_span,
+        )
+        
+        if window_start is None or (now_timestamp - int(window_start)) >= window_size:
+            # Reset window and counter - start new 24-hour window
+            await self.router_cache.async_set_cache(
+                key=window_key,
+                value=now_timestamp,
+                ttl=window_size,
+                parent_otel_span=parent_otel_span,
+            )
+            await self.router_cache.async_set_cache(
+                key=counter_key,
+                value=value,
+                ttl=window_size,
+                parent_otel_span=parent_otel_span,
+            )
+        else:
+            # Increment counter within existing window
+            await self.router_cache.async_increment_cache(
+                key=counter_key,
+                value=value,
+                ttl=window_size,
+                parent_otel_span=parent_otel_span,
+            )
 
     def _get_deployment_limit(self, deployment: Dict, limit_type: str) -> float:
         """Get deployment limit (tpm, rpm, tpd, rpd) from deployment configuration."""
@@ -491,12 +608,20 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         tpd_dict = {}  # {model_id: 1, ..}
         if tpd_keys is not None and tpd_values is not None:
             for idx, key in enumerate(tpd_keys):
-                tpd_dict[tpd_keys[idx].split(":")[0]] = tpd_values[idx]
+                # Parse sliding window key format: "global_router:{id}:{model}:tpd_sliding_counter"
+                key_parts = tpd_keys[idx].split(":")
+                if len(key_parts) >= 3:
+                    model_id = key_parts[1]  # Extract {id} from the key
+                    tpd_dict[model_id] = tpd_values[idx]
 
         rpd_dict = {}  # {model_id: 1, ..}
         if rpd_keys is not None and rpd_values is not None:
             for idx, key in enumerate(rpd_keys):
-                rpd_dict[rpd_keys[idx].split(":")[0]] = rpd_values[idx]
+                # Parse sliding window key format: "global_router:{id}:{model}:rpd_sliding_counter"
+                key_parts = rpd_keys[idx].split(":")
+                if len(key_parts) >= 3:
+                    model_id = key_parts[1]  # Extract {id} from the key
+                    rpd_dict[model_id] = rpd_values[idx]
 
         try:
             input_tokens = token_counter(messages=messages, text=input)
@@ -560,6 +685,8 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         self, healthy_deployments: list, current_minute: str, current_day: str
     ) -> Tuple[List[str], List[str], List[str], List[str]]:
         """Create cache keys for TPM, RPM, TPD, and RPD tracking."""
+        from litellm.types.router import RouterCacheEnum
+        
         tpm_keys = []
         rpm_keys = []
         tpd_keys = []
@@ -571,8 +698,10 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 deployment_name = m.get("litellm_params", {}).get("model")
                 tpm_key = "{}:{}:tpm:{}".format(id, deployment_name, current_minute)
                 rpm_key = "{}:{}:rpm:{}".format(id, deployment_name, current_minute)
-                tpd_key = "{}:{}:tpd:{}".format(id, deployment_name, current_day)
-                rpd_key = "{}:{}:rpd:{}".format(id, deployment_name, current_day)
+                
+                # Use sliding window keys for daily tracking
+                tpd_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(id=id, model=deployment_name)
+                rpd_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(id=id, model=deployment_name)
 
                 tpm_keys.append(tpm_key)
                 rpm_keys.append(rpm_key)

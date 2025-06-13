@@ -124,7 +124,7 @@ async def test_router_daily_usage_tracking():
     
     router = Router(
         model_list=model_list,
-        cache=DualCache()
+        # Don't specify cache parameters to use in-memory cache
     )
     
     # Test the daily usage tracking method
@@ -163,7 +163,7 @@ async def test_daily_rate_limiting():
     
     router = Router(
         model_list=model_list,
-        cache=DualCache()
+        # Don't specify cache parameters to use in-memory cache
     )
     
     # Create rate limiter

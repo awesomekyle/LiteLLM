@@ -715,6 +715,11 @@ class RouterCacheEnum(enum.Enum):
     RPM = "global_router:{id}:{model}:rpm:{current_minute}"
     TPD = "global_router:{id}:{model}:tpd:{current_day}"
     RPD = "global_router:{id}:{model}:rpd:{current_day}"
+    # Sliding window cache keys
+    TPD_SLIDING_WINDOW = "global_router:{id}:{model}:tpd_sliding_window"
+    TPD_SLIDING_COUNTER = "global_router:{id}:{model}:tpd_sliding_counter"
+    RPD_SLIDING_WINDOW = "global_router:{id}:{model}:rpd_sliding_window"
+    RPD_SLIDING_COUNTER = "global_router:{id}:{model}:rpd_sliding_counter"
 
 
 class GenericBudgetWindowDetails(BaseModel):

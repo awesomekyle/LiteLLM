@@ -5395,7 +5395,7 @@ class Router:
         self, model_group: str
     ) -> Tuple[Optional[int], Optional[int]]:
         """
-        Returns current tpd/rpd usage for model group
+        Returns current tpd/rpd usage for model group using sliding window tracking.
 
         Parameters:
         - model_group: str - the received model name from the user (can be a wildcard route).
@@ -5403,10 +5403,12 @@ class Router:
         Returns:
         - usage: Tuple[tpd, rpd]
         """
-        dt = get_utc_datetime()
-        current_day = dt.strftime(
-            "%Y-%m-%d"
-        )  # use the same timezone regardless of system clock
+        import time
+        from litellm.types.router import RouterCacheEnum
+        
+        window_size = 24 * 60 * 60  # 24 hours in seconds
+        now_timestamp = int(time.time())
+        
         tpd_keys: List[str] = []
         rpd_keys: List[str] = []
 
@@ -5421,20 +5423,21 @@ class Router:
             )  # USE THE MODEL SENT TO litellm.completion() - consistent with how global_router cache is written.
             if id is None or litellm_model is None:
                 continue
+                
+            # Add sliding window counter keys
             tpd_keys.append(
-                RouterCacheEnum.TPD.value.format(
+                RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(
                     id=id,
                     model=litellm_model,
-                    current_day=current_day,
                 )
             )
             rpd_keys.append(
-                RouterCacheEnum.RPD.value.format(
+                RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(
                     id=id,
                     model=litellm_model,
-                    current_day=current_day,
                 )
             )
+            
         combined_tpd_rpd_keys = tpd_keys + rpd_keys
 
         combined_tpd_rpd_values = await self.cache.async_batch_get_cache(
