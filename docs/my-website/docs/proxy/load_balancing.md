@@ -197,10 +197,12 @@ model_list:
 
 ### How Daily Limits Work
 
-- Daily limits are tracked using a 24-hour rolling window
-- Cache keys use `YYYY-MM-DD` format for daily tracking
+- Daily limits are tracked using a **24-hour sliding window**
+- Each request/token slot expires exactly 24 hours after it was submitted
+- Cache keys use timestamp-based tracking for sliding window behavior
 - When a deployment hits its daily limit, it's automatically excluded from routing
-- Daily usage resets at midnight UTC
+- Unlike calendar day tracking, usage doesn't reset at midnight—it resets 24 hours after the first request in the window
+- This matches how most providers (like Google Gemini) track daily usage
 - Works with Redis for multi-instance deployments
 
 ### Combining Multiple Rate Limits

@@ -5,22 +5,17 @@ litellm.Router Types - includes RouterConfig, UpdateRouterConfig, ModelInfo etc
 import datetime
 import enum
 import uuid
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_type_hints
+from typing import Dict, List, Literal, Optional, Tuple, Union, get_type_hints
 
 import httpx
-from httpx import AsyncClient, Client
-from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI, OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Required, TypedDict
 
-from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
-
-from ..exceptions import RateLimitError
 from .completion import CompletionRequest
 from .embedding import EmbeddingRequest
 from .llms.openai import OpenAIFileObject
 from .llms.vertex_ai import VERTEX_CREDENTIALS_TYPES
-from .utils import ModelResponse, ProviderSpecificModelInfo
+from .utils import ModelResponse
 
 
 class ConfigurableClientsideParamsCustomAuth(TypedDict):
@@ -96,16 +91,18 @@ class ModelInfo(BaseModel):
     id: Optional[
         str
     ]  # Allow id to be optional on input, but it will always be present as a str in the model instance
-    db_model: bool = False  # used for proxy - to separate models which are stored in the db vs. config.
+    db_model: bool = (
+        False  # used for proxy - to separate models which are stored in the db vs. config.
+    )
     updated_at: Optional[datetime.datetime] = None
     updated_by: Optional[str] = None
 
     created_at: Optional[datetime.datetime] = None
     created_by: Optional[str] = None
 
-    base_model: Optional[
-        str
-    ] = None  # specify if the base model is azure/gpt-3.5-turbo etc for accurate cost tracking
+    base_model: Optional[str] = (
+        None  # specify if the base model is azure/gpt-3.5-turbo etc for accurate cost tracking
+    )
     tier: Optional[Literal["free", "paid"]] = None
 
     """
@@ -182,12 +179,12 @@ class GenericLiteLLMParams(CredentialLiteLLMParams, CustomPricingLiteLLMParams):
     rpm: Optional[int] = None
     tpd: Optional[int] = None
     rpd: Optional[int] = None
-    timeout: Optional[
-        Union[float, str, httpx.Timeout]
-    ] = None  # if str, pass in as os.environ/
-    stream_timeout: Optional[
-        Union[float, str]
-    ] = None  # timeout when making stream=True calls, if str, pass in as os.environ/
+    timeout: Optional[Union[float, str, httpx.Timeout]] = (
+        None  # if str, pass in as os.environ/
+    )
+    stream_timeout: Optional[Union[float, str]] = (
+        None  # timeout when making stream=True calls, if str, pass in as os.environ/
+    )
     max_retries: Optional[int] = None
     organization: Optional[str] = None  # for openai orgs
     configurable_clientside_auth_params: CONFIGURABLE_CLIENTSIDE_AUTH_PARAMS = None
@@ -262,9 +259,9 @@ class GenericLiteLLMParams(CredentialLiteLLMParams, CustomPricingLiteLLMParams):
         if max_retries is not None and isinstance(max_retries, str):
             max_retries = int(max_retries)  # cast to int
         # We need to keep max_retries in args since it's a parameter of GenericLiteLLMParams
-        args[
-            "max_retries"
-        ] = max_retries  # Put max_retries back in args after popping it
+        args["max_retries"] = (
+            max_retries  # Put max_retries back in args after popping it
+        )
         super().__init__(**args, **params)
 
     def __contains__(self, key):
@@ -465,7 +462,7 @@ class Deployment(BaseModel):
     def to_json(self, **kwargs):
         try:
             return self.model_dump(**kwargs)  # noqa
-        except Exception as e:
+        except Exception:
             # if using pydantic v1
             return self.dict(**kwargs)
 
@@ -586,7 +583,7 @@ class ModelGroupInfo(BaseModel):
 
     def __init__(self, **data):
         for field_name, field_type in get_type_hints(self.__class__).items():
-            if field_type == bool and data.get(field_name) is None:
+            if field_type is bool and data.get(field_name) is None:
                 data[field_name] = False
         super().__init__(**data)
 
@@ -715,6 +712,11 @@ class RouterCacheEnum(enum.Enum):
     RPM = "global_router:{id}:{model}:rpm:{current_minute}"
     TPD = "global_router:{id}:{model}:tpd:{current_day}"
     RPD = "global_router:{id}:{model}:rpd:{current_day}"
+    # Sliding window cache keys
+    TPD_SLIDING_WINDOW = "global_router:{id}:{model}:tpd_sliding_window"
+    TPD_SLIDING_COUNTER = "global_router:{id}:{model}:tpd_sliding_counter"
+    RPD_SLIDING_WINDOW = "global_router:{id}:{model}:rpd_sliding_window"
+    RPD_SLIDING_COUNTER = "global_router:{id}:{model}:rpd_sliding_counter"
 
 
 class GenericBudgetWindowDetails(BaseModel):

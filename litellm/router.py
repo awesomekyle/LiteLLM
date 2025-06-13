@@ -349,9 +349,9 @@ class Router:
         )  # names of models under litellm_params. ex. azure/chatgpt-v-2
         self.deployment_latency_map = {}
         ### CACHING ###
-        cache_type: Literal[
-            "local", "redis", "redis-semantic", "s3", "disk"
-        ] = "local"  # default to an in-memory cache
+        cache_type: Literal["local", "redis", "redis-semantic", "s3", "disk"] = (
+            "local"  # default to an in-memory cache
+        )
         redis_cache = None
         cache_config: Dict[str, Any] = {}
 
@@ -573,9 +573,9 @@ class Router:
                 )
             )
 
-        self.model_group_retry_policy: Optional[
-            Dict[str, RetryPolicy]
-        ] = model_group_retry_policy
+        self.model_group_retry_policy: Optional[Dict[str, RetryPolicy]] = (
+            model_group_retry_policy
+        )
 
         self.allowed_fails_policy: Optional[AllowedFailsPolicy] = None
         if allowed_fails_policy is not None:
@@ -3414,11 +3414,11 @@ class Router:
 
                 if isinstance(e, litellm.ContextWindowExceededError):
                     if context_window_fallbacks is not None:
-                        fallback_model_group: Optional[
-                            List[str]
-                        ] = self._get_fallback_model_group_from_fallbacks(
-                            fallbacks=context_window_fallbacks,
-                            model_group=model_group,
+                        fallback_model_group: Optional[List[str]] = (
+                            self._get_fallback_model_group_from_fallbacks(
+                                fallbacks=context_window_fallbacks,
+                                model_group=model_group,
+                            )
                         )
                         if fallback_model_group is None:
                             raise original_exception
@@ -3450,11 +3450,11 @@ class Router:
                         e.message += "\n{}".format(error_message)
                 elif isinstance(e, litellm.ContentPolicyViolationError):
                     if content_policy_fallbacks is not None:
-                        fallback_model_group: Optional[
-                            List[str]
-                        ] = self._get_fallback_model_group_from_fallbacks(
-                            fallbacks=content_policy_fallbacks,
-                            model_group=model_group,
+                        fallback_model_group: Optional[List[str]] = (
+                            self._get_fallback_model_group_from_fallbacks(
+                                fallbacks=content_policy_fallbacks,
+                                model_group=model_group,
+                            )
                         )
                         if fallback_model_group is None:
                             raise original_exception
@@ -5395,7 +5395,7 @@ class Router:
         self, model_group: str
     ) -> Tuple[Optional[int], Optional[int]]:
         """
-        Returns current tpd/rpd usage for model group
+        Returns current tpd/rpd usage for model group using sliding window tracking.
 
         Parameters:
         - model_group: str - the received model name from the user (can be a wildcard route).
@@ -5403,10 +5403,8 @@ class Router:
         Returns:
         - usage: Tuple[tpd, rpd]
         """
-        dt = get_utc_datetime()
-        current_day = dt.strftime(
-            "%Y-%m-%d"
-        )  # use the same timezone regardless of system clock
+        from litellm.types.router import RouterCacheEnum
+
         tpd_keys: List[str] = []
         rpd_keys: List[str] = []
 
@@ -5421,20 +5419,21 @@ class Router:
             )  # USE THE MODEL SENT TO litellm.completion() - consistent with how global_router cache is written.
             if id is None or litellm_model is None:
                 continue
+
+            # Add sliding window counter keys
             tpd_keys.append(
-                RouterCacheEnum.TPD.value.format(
+                RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(
                     id=id,
                     model=litellm_model,
-                    current_day=current_day,
                 )
             )
             rpd_keys.append(
-                RouterCacheEnum.RPD.value.format(
+                RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(
                     id=id,
                     model=litellm_model,
-                    current_day=current_day,
                 )
             )
+
         combined_tpd_rpd_keys = tpd_keys + rpd_keys
 
         combined_tpd_rpd_values = await self.cache.async_batch_get_cache(
