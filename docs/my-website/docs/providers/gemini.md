@@ -100,7 +100,19 @@ resp = completion(
   litellm_params:
     model: gemini/gemini-2.5-flash-preview-04-17
     api_key: os.environ/GEMINI_API_KEY
+    rpm: 150      # Google rate limits
+    tpm: 2000000  # 2M tokens per minute  
+    rpd: 1000     # 1000 requests per day (Tier 1 limit)
+    tpd: 50000000 # 50M tokens per day
 ```
+
+:::info Daily Rate Limits for Gemini
+
+Google Gemini has strict daily rate limits. For Tier 1 users, this is typically 1000 requests per day. Use `rpd` and `tpd` parameters to respect these limits and prevent your deployments from being throttled.
+
+See [Google's rate limits documentation](https://ai.google.dev/gemini-api/docs/rate-limits#tier-1) for current limits.
+
+:::
 
 2. Start proxy
 
