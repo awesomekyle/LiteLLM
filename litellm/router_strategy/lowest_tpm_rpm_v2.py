@@ -254,11 +254,8 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             current_minute = dt.strftime(
                 "%H-%M"
             )  # use the same timezone regardless of system clock
-            current_day = dt.strftime("%Y-%m-%d")
 
             tpm_key = f"{id}:{model}:tpm:{current_minute}"
-            tpd_key = f"{id}:{model}:tpd:{current_day}"
-            rpd_key = f"{id}:{model}:rpd:{current_day}"
             # ------------
             # Update usage
             # ------------
@@ -268,7 +265,7 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             self.router_cache.increment_cache(
                 key=tpm_key, value=total_tokens, ttl=self.routing_args.ttl
             )
-            ## TPD (daily tokens) - sliding window implementation  
+            ## TPD (daily tokens) - sliding window implementation
             self._update_sliding_window_cache(
                 id=id,
                 model=model,
@@ -305,25 +302,34 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         Uses a 24-hour sliding window instead of calendar day.
         """
         import time
+
         from litellm.types.router import RouterCacheEnum
-        
+
         # Define window size (24 hours in seconds)
         window_size = 24 * 60 * 60
         now_timestamp = int(time.time())
-        
+
         # Get the appropriate cache keys
         if window_type == "tpd":
-            window_key = RouterCacheEnum.TPD_SLIDING_WINDOW.value.format(id=id, model=model)
-            counter_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(id=id, model=model)
+            window_key = RouterCacheEnum.TPD_SLIDING_WINDOW.value.format(
+                id=id, model=model
+            )
+            counter_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(
+                id=id, model=model
+            )
         elif window_type == "rpd":
-            window_key = RouterCacheEnum.RPD_SLIDING_WINDOW.value.format(id=id, model=model)
-            counter_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(id=id, model=model)
+            window_key = RouterCacheEnum.RPD_SLIDING_WINDOW.value.format(
+                id=id, model=model
+            )
+            counter_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(
+                id=id, model=model
+            )
         else:
             raise ValueError(f"Invalid window_type: {window_type}")
-        
+
         # Get current window start time
         window_start = self.router_cache.get_cache(key=window_key)
-        
+
         if window_start is None or (now_timestamp - int(window_start)) >= window_size:
             # Reset window and counter - start new 24-hour window
             self.router_cache.set_cache(
@@ -369,11 +375,8 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
             current_minute = dt.strftime(
                 "%H-%M"
             )  # use the same timezone regardless of system clock
-            current_day = dt.strftime("%Y-%m-%d")
 
             tpm_key = f"{id}:{model}:tpm:{current_minute}"
-            tpd_key = f"{id}:{model}:tpd:{current_day}"
-            rpd_key = f"{id}:{model}:rpd:{current_day}"
             # ------------
             # Update usage
             # ------------
@@ -394,7 +397,7 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 window_type="tpd",
                 parent_otel_span=parent_otel_span,
             )
-            ## RPD (daily requests) - sliding window implementation  
+            ## RPD (daily requests) - sliding window implementation
             await self._async_update_sliding_window_cache(
                 id=id,
                 model=model,
@@ -427,28 +430,37 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
         Uses a 24-hour sliding window instead of calendar day.
         """
         import time
+
         from litellm.types.router import RouterCacheEnum
-        
+
         # Define window size (24 hours in seconds)
         window_size = 24 * 60 * 60
         now_timestamp = int(time.time())
-        
+
         # Get the appropriate cache keys
         if window_type == "tpd":
-            window_key = RouterCacheEnum.TPD_SLIDING_WINDOW.value.format(id=id, model=model)
-            counter_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(id=id, model=model)
+            window_key = RouterCacheEnum.TPD_SLIDING_WINDOW.value.format(
+                id=id, model=model
+            )
+            counter_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(
+                id=id, model=model
+            )
         elif window_type == "rpd":
-            window_key = RouterCacheEnum.RPD_SLIDING_WINDOW.value.format(id=id, model=model)
-            counter_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(id=id, model=model)
+            window_key = RouterCacheEnum.RPD_SLIDING_WINDOW.value.format(
+                id=id, model=model
+            )
+            counter_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(
+                id=id, model=model
+            )
         else:
             raise ValueError(f"Invalid window_type: {window_type}")
-        
+
         # Get current window start time
         window_start = await self.router_cache.async_get_cache(
             key=window_key,
             parent_otel_span=parent_otel_span,
         )
-        
+
         if window_start is None or (now_timestamp - int(window_start)) >= window_size:
             # Reset window and counter - start new 24-hour window
             await self.router_cache.async_set_cache(
@@ -686,7 +698,7 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
     ) -> Tuple[List[str], List[str], List[str], List[str]]:
         """Create cache keys for TPM, RPM, TPD, and RPD tracking."""
         from litellm.types.router import RouterCacheEnum
-        
+
         tpm_keys = []
         rpm_keys = []
         tpd_keys = []
@@ -698,10 +710,14 @@ class LowestTPMLoggingHandler_v2(BaseRoutingStrategy, CustomLogger):
                 deployment_name = m.get("litellm_params", {}).get("model")
                 tpm_key = "{}:{}:tpm:{}".format(id, deployment_name, current_minute)
                 rpm_key = "{}:{}:rpm:{}".format(id, deployment_name, current_minute)
-                
+
                 # Use sliding window keys for daily tracking
-                tpd_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(id=id, model=deployment_name)
-                rpd_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(id=id, model=deployment_name)
+                tpd_key = RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(
+                    id=id, model=deployment_name
+                )
+                rpd_key = RouterCacheEnum.RPD_SLIDING_COUNTER.value.format(
+                    id=id, model=deployment_name
+                )
 
                 tpm_keys.append(tpm_key)
                 rpm_keys.append(rpm_key)

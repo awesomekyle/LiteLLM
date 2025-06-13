@@ -349,9 +349,9 @@ class Router:
         )  # names of models under litellm_params. ex. azure/chatgpt-v-2
         self.deployment_latency_map = {}
         ### CACHING ###
-        cache_type: Literal[
-            "local", "redis", "redis-semantic", "s3", "disk"
-        ] = "local"  # default to an in-memory cache
+        cache_type: Literal["local", "redis", "redis-semantic", "s3", "disk"] = (
+            "local"  # default to an in-memory cache
+        )
         redis_cache = None
         cache_config: Dict[str, Any] = {}
 
@@ -573,9 +573,9 @@ class Router:
                 )
             )
 
-        self.model_group_retry_policy: Optional[
-            Dict[str, RetryPolicy]
-        ] = model_group_retry_policy
+        self.model_group_retry_policy: Optional[Dict[str, RetryPolicy]] = (
+            model_group_retry_policy
+        )
 
         self.allowed_fails_policy: Optional[AllowedFailsPolicy] = None
         if allowed_fails_policy is not None:
@@ -3414,11 +3414,11 @@ class Router:
 
                 if isinstance(e, litellm.ContextWindowExceededError):
                     if context_window_fallbacks is not None:
-                        fallback_model_group: Optional[
-                            List[str]
-                        ] = self._get_fallback_model_group_from_fallbacks(
-                            fallbacks=context_window_fallbacks,
-                            model_group=model_group,
+                        fallback_model_group: Optional[List[str]] = (
+                            self._get_fallback_model_group_from_fallbacks(
+                                fallbacks=context_window_fallbacks,
+                                model_group=model_group,
+                            )
                         )
                         if fallback_model_group is None:
                             raise original_exception
@@ -3450,11 +3450,11 @@ class Router:
                         e.message += "\n{}".format(error_message)
                 elif isinstance(e, litellm.ContentPolicyViolationError):
                     if content_policy_fallbacks is not None:
-                        fallback_model_group: Optional[
-                            List[str]
-                        ] = self._get_fallback_model_group_from_fallbacks(
-                            fallbacks=content_policy_fallbacks,
-                            model_group=model_group,
+                        fallback_model_group: Optional[List[str]] = (
+                            self._get_fallback_model_group_from_fallbacks(
+                                fallbacks=content_policy_fallbacks,
+                                model_group=model_group,
+                            )
                         )
                         if fallback_model_group is None:
                             raise original_exception
@@ -5403,12 +5403,8 @@ class Router:
         Returns:
         - usage: Tuple[tpd, rpd]
         """
-        import time
         from litellm.types.router import RouterCacheEnum
-        
-        window_size = 24 * 60 * 60  # 24 hours in seconds
-        now_timestamp = int(time.time())
-        
+
         tpd_keys: List[str] = []
         rpd_keys: List[str] = []
 
@@ -5423,7 +5419,7 @@ class Router:
             )  # USE THE MODEL SENT TO litellm.completion() - consistent with how global_router cache is written.
             if id is None or litellm_model is None:
                 continue
-                
+
             # Add sliding window counter keys
             tpd_keys.append(
                 RouterCacheEnum.TPD_SLIDING_COUNTER.value.format(
@@ -5437,7 +5433,7 @@ class Router:
                     model=litellm_model,
                 )
             )
-            
+
         combined_tpd_rpd_keys = tpd_keys + rpd_keys
 
         combined_tpd_rpd_values = await self.cache.async_batch_get_cache(
